@@ -54,6 +54,11 @@ body {
   background-repeat: no-repeat;
 }
 
+/* Reverse (mirror) the background photo */
+#bgLayer.flipped {
+  transform: scaleX(-1);
+}
+
 #bgLayer::after {
   content: "";
   position: absolute;

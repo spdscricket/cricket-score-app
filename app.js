@@ -2,14 +2,17 @@
 
 /* =========================================================
    SRI PIYARATHANA DHAMMA SCHOOL CRICKET TOURNAMENT
-   PROFESSIONAL TOURNAMENT ENGINE
-   (Setup -> Groups -> Round Robin -> Semis -> Final -> Champion)
+   (Setup -> Groups -> Round Robin -> Q1 + Eliminator -> Q2 -> Final -> Champion)
    ========================================================= */
 
-const STORAGE_KEY = "spds_tournament_v3";
+const STORAGE_KEY = "spds_tournament_v4";
 const $ = id => document.getElementById(id);
 
 let tournament = null;
+
+function isKnockoutStage(stage) {
+    return ["Qualifier 1", "Eliminator", "Qualifier 2", "Final"].includes(stage);
+}
 
 /* =========================================================
    DEFAULT STATE
@@ -17,13 +20,13 @@ let tournament = null;
 
 function newTournament() {
     return {
-        stage: "setup",       // setup -> teams -> group -> semis -> final -> complete
-        numTeams: 8,
+        stage: "setup",       // setup -> teams -> group -> playoffs -> final -> complete
+        numTeams: 6,
         maxOvers: 5,
         sheetsUrl: "",
         groupA: [],
         groupB: [],
-        schedule: [],          // flat ordered list of fixtures
+        schedule: [],
         champion: null,
         liveMatch: null,
         bestBatsman: null,
@@ -46,10 +49,10 @@ function createFixture(id, stage, round, teamA, teamB) {
     return {
         id, stage, round,
         teamA, teamB,
-        status: "pending",     // pending -> completed
+        status: "pending",
         result: null,
-        winner: null,           // team name or "Tie"
-        matchSnapshot: null,    // full liveMatch clone once completed (for scorecards/sheets)
+        winner: null,
+        matchSnapshot: null,
         playerOfMatch: null
     };
 }
@@ -70,7 +73,6 @@ function loadTournament() {
     }
     try {
         tournament = JSON.parse(saved);
-        // Backfill fields for tournaments saved by older versions of this app
         if (tournament.bestBatsman === undefined) tournament.bestBatsman = null;
         if (tournament.bestBowler === undefined) tournament.bestBowler = null;
         if (tournament.playerOfTournament === undefined) tournament.playerOfTournament = null;
@@ -81,7 +83,7 @@ function loadTournament() {
 }
 
 /* =========================================================
-   MODAL SYSTEM (replaces alert/prompt/confirm)
+   MODAL SYSTEM
    ========================================================= */
 
 function hideModal() {
@@ -208,7 +210,6 @@ $("btnCreateTournament").addEventListener("click", () => {
     renderTeamNameInputs(numTeams);
     saveTournament();
     showScreen("screenTeams");
-
 });
 
 function renderTeamNameInputs(n) {
@@ -233,7 +234,6 @@ $("btnConfirmTeams").addEventListener("click", () => {
     const inputs = document.querySelectorAll(".teamNameInput");
     let names = Array.from(inputs).map(inp => inp.value.trim());
 
-    // fallback empty names, ensure uniqueness
     const seen = {};
     names = names.map((name, i) => {
         if (!name) name = `Team ${i + 1}`;
@@ -284,7 +284,6 @@ $("btnConfirmTeams").addEventListener("click", () => {
     saveTournament();
     renderTournamentScreen();
     showScreen("screenTournament");
-
 });
 
 /* Round robin circle method. Returns [{round, teamA, teamB}] */
@@ -318,7 +317,7 @@ function generateRoundRobin(teamNames) {
 }
 
 /* =========================================================
-   TOURNAMENT SCREEN (standings + schedule + next match)
+   TOURNAMENT SCREEN
    ========================================================= */
 
 function findTeam(name) {
@@ -341,7 +340,7 @@ function renderTournamentScreen() {
 
     $("tournamentStageLabel").textContent =
         tournament.stage === "group" ? "Group Stage" :
-        tournament.stage === "semis" ? "Semi Final Stage" :
+        tournament.stage === "playoffs" ? "Playoffs" :
         tournament.stage === "final" ? "Final Stage" :
         "Completed";
 }
@@ -406,7 +405,7 @@ function renderScheduleList() {
 
 function renderKnockouts() {
 
-    const knockoutFixtures = tournament.schedule.filter(f => f.stage.startsWith("Semi") || f.stage === "Final");
+    const knockoutFixtures = tournament.schedule.filter(f => isKnockoutStage(f.stage));
 
     if (knockoutFixtures.length === 0) {
         $("knockoutCard").classList.add("hidden");
@@ -445,7 +444,6 @@ function renderNextMatchCard() {
         return;
     }
 
-    // Resume in-progress match first
     if (tournament.liveMatch) {
         const fixture = getFixtureById(tournament.liveMatch.fixtureId);
         if (fixture && fixture.status !== "completed") {
@@ -473,7 +471,7 @@ function renderNextMatchCard() {
 $("btnViewChampion").addEventListener("click", () => showScreen("screenChampion"));
 
 /* =========================================================
-   SCORECARD MODAL (view completed match detail)
+   SCORECARD MODAL
    ========================================================= */
 
 function showScorecardModal(fixture) {
@@ -527,7 +525,7 @@ function startFixture(fixtureId) {
         teamA: fixture.teamA,
         teamB: fixture.teamB,
         maxOvers: tournament.maxOvers,
-        phase: "toss",          // toss -> openingPlayers -> scoring
+        phase: "toss",
         battingFirst: null,
         inningsNumber: 1,
         battingTeam: "",
@@ -546,7 +544,7 @@ function startFixture(fixtureId) {
         innings: []
     };
 
-    fixture.status = "pending"; // stays pending until finished; "live" indicated via liveMatch check
+    fixture.status = "pending";
     saveTournament();
     enterLiveMatch(fixtureId);
 }
@@ -874,7 +872,7 @@ function decimalOvers(balls) {
 function recordFinalInningsSnapshot(reason) {
 
     const lm = tournament.liveMatch;
-    if (lm.inningsComplete) return; // already recorded — avoid duplicate push
+    if (lm.inningsComplete) return;
 
     lm.inningsComplete = true;
 
@@ -889,8 +887,6 @@ function recordFinalInningsSnapshot(reason) {
         overs: ballsToOvers(lm.legalBalls),
         nrrBalls,
         reason,
-        // snapshot this innings' individual player figures before the
-        // batsmen/bowlers arrays get reset for the next innings
         batsmen: JSON.parse(JSON.stringify(lm.batsmen)),
         bowlers: JSON.parse(JSON.stringify(lm.bowlers))
     });
@@ -928,7 +924,6 @@ function finishInnings(reason) {
         return;
     }
 
-    // second innings ended without chase completing -> compare and finish
     compareScoresAndFinish();
 }
 
@@ -974,7 +969,7 @@ function finishMatch(winnerName, resultText) {
 
     const lm = tournament.liveMatch;
     const fixture = getFixtureById(lm.fixtureId);
-    const isKnockout = fixture.stage.startsWith("Semi") || fixture.stage === "Final";
+    const isKnockout = isKnockoutStage(fixture.stage);
 
     lm.matchComplete = true;
     lm.inningsComplete = true;
@@ -989,10 +984,6 @@ function finishMatch(winnerName, resultText) {
         fixture.matchSnapshot = JSON.parse(JSON.stringify(lm));
         fixture.playerOfMatch = computePlayerOfMatch(lm.innings);
 
-        // Recompute standings for the WHOLE group from every completed match's
-        // saved snapshot, rather than nudging numbers incrementally. This is
-        // idempotent and self-correcting: it can never drift out of sync with
-        // the actual match results, no matter what state existed before.
         if (fixture.stage === "Group A" || fixture.stage === "Group B") {
             recomputeGroupStandings();
         }
@@ -1040,16 +1031,8 @@ function finishMatch(winnerName, resultText) {
 
 /* =========================================================
    STANDINGS / NRR — FULL RECOMPUTE
-   =========================================================
-   Rather than mutating each team's totals a little after every
-   match (which is fragile — a double-save, a stale reload, or
-   any one bad increment quietly puts a team's numbers out of
-   sync forever), standings are rebuilt from scratch from the
-   saved matchSnapshot of every completed group-stage fixture,
-   every time a match finishes. This is idempotent: running it
-   twice, or on old/imported data, always lands on the exact
-   same correct numbers. It also self-heals tournaments saved
-   by an earlier, buggier version of this app — see init().
+   Rebuilt from every completed group fixture's saved snapshot,
+   so it is idempotent and self-healing.
    ========================================================= */
 
 function resetTeamStats(team) {
@@ -1085,8 +1068,6 @@ function applyMatchToStandings(fixture, teams) {
         teamBObj.won++; teamBObj.points += 2;
         teamAObj.lost++;
     } else {
-        // Tie (or a tie-break pick in a group match, which cannot normally
-        // happen, but is handled the same defensive way just in case).
         teamAObj.tied++; teamAObj.points += 1;
         teamBObj.tied++; teamBObj.points += 1;
     }
@@ -1130,8 +1111,6 @@ function recomputeGroupStandings() {
    PLAYER STATS — LEADERBOARDS, PLAYER OF MATCH / TOURNAMENT
    ========================================================= */
 
-/* Merge batting + bowling figures from a list of innings (with
-   embedded .batsmen / .bowlers) into one map keyed by player name. */
 function mergePlayerFigures(inningsList) {
 
     const players = {};
@@ -1161,9 +1140,6 @@ function mergePlayerFigures(inningsList) {
     return players;
 }
 
-/* Batting contribution: raw runs, with a bonus for scoring quickly
-   (only once a batsman has faced enough balls for strike rate to be
-   meaningful) so a fast 30 can outweigh a slow 35. */
 function battingImpact(p) {
     if (p.balls <= 0) return 0;
     const strikeRate = (p.runs / p.balls) * 100;
@@ -1171,9 +1147,6 @@ function battingImpact(p) {
     return p.runs + paceBonus;
 }
 
-/* Bowling contribution: wickets are worth the most, with a bonus for
-   bowling economically (only once enough balls have been bowled for
-   economy rate to mean anything). */
 function bowlingImpact(p) {
     if (p.ballsBowled <= 0) return 0;
     const economy = p.runsConceded / (p.ballsBowled / 6);
@@ -1185,7 +1158,6 @@ function impactScore(p) {
     return battingImpact(p) + bowlingImpact(p);
 }
 
-/* Player of the Match — based on this single fixture's two innings only. */
 function computePlayerOfMatch(inningsList) {
 
     const players = mergePlayerFigures(inningsList);
@@ -1202,10 +1174,6 @@ function computePlayerOfMatch(inningsList) {
     return { name: best.name, summary: parts.join(" & ") || "-" };
 }
 
-/* Tournament-wide leaderboards, recomputed from every completed fixture
-   that has a saved matchSnapshot — including semis and the final, so a
-   standout knockout performance still counts. Safe to call any time —
-   always reflects exactly what's on record. */
 function computeLeaderboards() {
 
     const allInnings = [];
@@ -1229,7 +1197,6 @@ function computeLeaderboards() {
     return { batting, bowling, all: list };
 }
 
-/* Called once the final is completed — freezes the tournament awards. */
 function computeTournamentAwards() {
 
     const { batting, bowling, all } = computeLeaderboards();
@@ -1273,52 +1240,66 @@ function renderLeaderboardCard() {
 }
 
 /* =========================================================
-   PROGRESSION: GROUP -> SEMIS -> FINAL -> CHAMPION
+   PROGRESSION
+   Group Stage
+     -> Qualifier 1  : Group A 1st vs Group B 1st (winner -> Final, loser -> Qualifier 2)
+     -> Eliminator   : Group A 2nd vs Group B 2nd (loser out, winner -> Qualifier 2)
+     -> Qualifier 2  : Q1 loser vs Eliminator winner (winner -> Final)
+     -> Final        : Q1 winner vs Q2 winner
    ========================================================= */
+
+function fixtureLoser(f) {
+    return f.winner === f.teamA ? f.teamB : f.teamA;
+}
 
 function checkProgressionAndAdvance() {
 
     const groupFixtures = tournament.schedule.filter(f => f.stage === "Group A" || f.stage === "Group B");
     const groupDone = groupFixtures.length > 0 && groupFixtures.every(f => f.status === "completed");
-    const hasSemis = tournament.schedule.some(f => f.id === "SF1");
 
-    if (groupDone && !hasSemis) {
-        generateSemiFinals();
-        tournament.stage = "semis";
+    if (groupDone && !getFixtureById("Q1")) {
+        generatePlayoffs();
+        tournament.stage = "playoffs";
         return;
     }
 
-    const sf1 = getFixtureById("SF1");
-    const sf2 = getFixtureById("SF2");
-    const semisDone = sf1 && sf2 && sf1.status === "completed" && sf2.status === "completed";
-    const hasFinal = tournament.schedule.some(f => f.id === "FINAL");
+    const q1 = getFixtureById("Q1");
+    const elim = getFixtureById("ELIM");
+    const q2 = getFixtureById("Q2");
 
-    if (semisDone && !hasFinal) {
-        generateFinal(sf1, sf2);
-        tournament.stage = "final";
+    if (q1 && elim && q1.status === "completed" && elim.status === "completed" && !q2) {
+        tournament.schedule.push(
+            createFixture("Q2", "Qualifier 2", null, fixtureLoser(q1), elim.winner)
+        );
         return;
     }
 
     const final = getFixtureById("FINAL");
+    const q2now = getFixtureById("Q2");
+
+    if (q1 && q2now && q1.status === "completed" && q2now.status === "completed" && !final) {
+        tournament.schedule.push(
+            createFixture("FINAL", "Final", null, q1.winner, q2now.winner)
+        );
+        tournament.stage = "final";
+        return;
+    }
+
     if (final && final.status === "completed") {
         tournament.champion = final.winner;
         tournament.stage = "complete";
     }
 }
 
-function generateSemiFinals() {
+function generatePlayoffs() {
 
     const sortedA = [...tournament.groupA].sort((a, b) => b.points - a.points || b.nrr - a.nrr);
     const sortedB = [...tournament.groupB].sort((a, b) => b.points - a.points || b.nrr - a.nrr);
 
     if (sortedA.length < 2 || sortedB.length < 2) return;
 
-    tournament.schedule.push(createFixture("SF1", "Semi Final 1", null, sortedA[0].name, sortedB[1].name));
-    tournament.schedule.push(createFixture("SF2", "Semi Final 2", null, sortedB[0].name, sortedA[1].name));
-}
-
-function generateFinal(sf1, sf2) {
-    tournament.schedule.push(createFixture("FINAL", "Final", null, sf1.winner, sf2.winner));
+    tournament.schedule.push(createFixture("Q1", "Qualifier 1", null, sortedA[0].name, sortedB[0].name));
+    tournament.schedule.push(createFixture("ELIM", "Eliminator", null, sortedA[1].name, sortedB[1].name));
 }
 
 /* =========================================================
@@ -1540,26 +1521,27 @@ function renderInningsHistory(lm) {
 }
 
 /* =========================================================
-   SETTINGS — GOOGLE SHEET URL + PERMANENT BACKGROUND PHOTO
-   =========================================================
-   The background photo used to be stored as a raw base64 data
-   URL in localStorage. localStorage has a hard ~5-10MB quota
-   shared with the whole app, so a normal phone photo (often
-   4-8MB by itself) could silently fail to save, or get evicted.
-
-   This now stores the photo in IndexedDB instead, which has a
-   quota in the hundreds of MB (effectively permanent for this
-   use case), and compresses/resizes the image on a <canvas>
-   before storing it so it stays small and reliable. Any photo
-   saved by the OLD version (still sitting in localStorage) is
-   still picked up automatically as a fallback.
+   SETTINGS — GOOGLE SHEET URL + BACKGROUND PHOTO (+ REVERSE)
+   Photo is stored in IndexedDB (compressed), with a legacy
+   localStorage fallback.
    ========================================================= */
 
-const BG_IMAGE_KEY = "spds_bg_image_v1"; // legacy localStorage key, read-only fallback
+const BG_IMAGE_KEY = "spds_bg_image_v1";
 const BG_DB_NAME = "spds_bg_store";
 const BG_DB_VERSION = 1;
 const BG_STORE_NAME = "images";
 const BG_RECORD_KEY = "background";
+const BG_FLIP_KEY = "spds_bg_flip";
+
+function applyBgFlip() {
+    const layer = $("bgLayer");
+    if (layer) layer.classList.toggle("flipped", localStorage.getItem(BG_FLIP_KEY) === "1");
+}
+
+function toggleBgFlip() {
+    localStorage.setItem(BG_FLIP_KEY, localStorage.getItem(BG_FLIP_KEY) === "1" ? "0" : "1");
+    applyBgFlip();
+}
 
 function openBgDB() {
     return new Promise((resolve, reject) => {
@@ -1613,8 +1595,6 @@ function blobToDataUrl(blob) {
     });
 }
 
-/* Resize to a sane max dimension and re-encode as JPEG so a big phone
-   photo becomes a small, fast, reliably-storable file. */
 function compressImageFile(file, maxDim = 1600, quality = 0.82) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -1668,7 +1648,6 @@ async function loadBackgroundImage() {
             console.error("Background photo: could not read stored image", e);
         }
     }
-    // Fallback: a photo saved by an earlier version of this app.
     const legacy = localStorage.getItem(BG_IMAGE_KEY);
     if (legacy) applyBackgroundImage(legacy);
 }
@@ -1685,10 +1664,9 @@ async function handleBackgroundUpload(file) {
         const dataUrl = await blobToDataUrl(compressed);
 
         if (saved) {
-            localStorage.removeItem(BG_IMAGE_KEY); // clear out any old copy
+            localStorage.removeItem(BG_IMAGE_KEY);
             applyBackgroundImage(dataUrl);
         } else {
-            // IndexedDB unavailable for some reason — fall back to localStorage.
             try {
                 localStorage.setItem(BG_IMAGE_KEY, dataUrl);
                 applyBackgroundImage(dataUrl);
@@ -1705,7 +1683,9 @@ async function handleBackgroundUpload(file) {
 async function removeBackgroundImage() {
     await deleteBgImageBlob();
     localStorage.removeItem(BG_IMAGE_KEY);
+    localStorage.removeItem(BG_FLIP_KEY);
     applyBackgroundImage(null);
+    applyBgFlip();
 }
 
 $("settingsBtn").addEventListener("click", () => {
@@ -1716,14 +1696,15 @@ $("settingsBtn").addEventListener("click", () => {
             <div class="field">
                 <label>Google Sheet Web App URL</label>
                 <input id="modalSheetsUrl" type="text" placeholder="https://script.google.com/macros/s/xxxxx/exec" value="${escapeHTML(tournament ? tournament.sheetsUrl || "" : "")}">
-                <small>Every completed match is sent here automatically. See the Apps Script setup guide provided in chat.</small>
+                <small>Every completed match is sent here automatically.</small>
             </div>
             <div class="field">
                 <label>Background Photo</label>
                 <input id="modalBgFile" type="file" accept="image/*">
-                <small>Saved permanently on this device/browser — survives closing the tab, restarting the browser, and reloading the app.</small>
+                <small>Saved permanently on this device/browser.</small>
             </div>
             <div class="btn-row">
+                <button id="modalFlipBg" type="button" class="secondary-btn full-width">↔ Reverse Background Photo</button>
                 <button id="modalRemoveBg" type="button" class="ghost-btn full-width">Remove Background Photo</button>
             </div>
         `,
@@ -1745,6 +1726,9 @@ $("settingsBtn").addEventListener("click", () => {
 
     const fileInput = $("modalBgFile");
     if (fileInput) fileInput.addEventListener("change", (e) => handleBackgroundUpload(e.target.files[0]));
+
+    const flipBtn = $("modalFlipBg");
+    if (flipBtn) flipBtn.addEventListener("click", toggleBgFlip);
 
     const removeBtn = $("modalRemoveBg");
     if (removeBtn) removeBtn.addEventListener("click", () => removeBackgroundImage());
@@ -1784,11 +1768,8 @@ function init() {
 
     loadTournament();
     loadBackgroundImage();
+    applyBgFlip();
 
-    // Self-heal: rebuild group standings from the saved match results every
-    // time the app loads, so any tournament saved by an older, buggy version
-    // of this app gets its NRR and points corrected automatically — with no
-    // need to replay any matches.
     if (tournament && tournament.schedule && tournament.schedule.length && tournament.groupA && tournament.groupB) {
         recomputeGroupStandings();
         if (tournament.stage === "complete") {
